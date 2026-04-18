@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPHERE-1</title>
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=Exo+2:wght@300;400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+:root {
+  --bg0:    #04070d;
+  --bg1:    #080e18;
+  --bg2:    #0c1520;
+  --bg3:    #111d2b;
+  --cyan:   #00e5ff;
+  --cyan2:  #00b8cc;
+  --amber:  #ffb300;
+  --red:    #ff1744;
+  --green:  #00e676;
+  --dim:    rgba(0,229,255,0.12);
+  --border: rgba(0,229,255,0.15);
+  --font-t: 'VT323', monospace;
+  --font-b: 'Exo 2', sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--cyan);font-family:var(--font-b);overflow:hidden}
+
+/* ── NOISE TEXTURE ── */
+body::after{
+  content:'';position:fixed;inset:0;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events:none;z-index:9999;opacity:.4;
+}
+
+/* ── SCANLINES ── */
+body::before{
+  content:'';position:fixed;inset:0;
+  background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.06) 3px,rgba(0,0,0,.06) 4px);
+  pointer-events:none;z-index:9998;
+}
+
+/* ── LAYOUT ── */
+.shell{display:grid;height:100vh;grid-template-rows:42px 1fr;gap:0}
+
+/* ── TOPBAR ── */
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 16px;background:var(--bg1);
+  border-bottom:1px solid var(--border);
+  font-family:var(--font-t);font-size:1.1rem;letter-spacing:.12em;
+}
+.logo{color:var(--cyan);text-shadow:0 0 16px var(--cyan)}
+.logo span{color:var(--amber)}
+.topbar-right{display:flex;gap:24px;font-size:.95rem;opacity:.8}
+.indicator{display:flex;align-items:center;gap:6px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--red);box-shadow:0 0 7px var(--red)}
+.dot.on{background:var(--green);box-shadow:0 0 7px var(--green);animation:blink 2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* ── MAIN GRID ── */
+.main{display:grid;grid-template-columns:220px 1fr 220px;gap:8px;padding:8px;overflow:hidden}
+
+/* ── PANEL ── */
+.panel{
+  background:var(--bg1);border:1px solid var(--border);border-radius:3px;
+  padding:12px;position:relative;overflow:hidden;display:flex;flex-direction:column;gap:10px;
+}
+.panel::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--cyan),transparent);opacity:.5}
+.ptitle{
+  font-family:var(--font-t);font-size:1rem;letter-spacing:.2em;
+  color:var(--amber);border-bottom:1px solid var(--border);padding-bottom:6px;
+}
+
+/* ── CAMERA ── */
+.cam-wrap{
+  position:relative;background:#000;border:1px solid var(--border);
+  border-radius:2px;overflow:hidden;flex:1;min-height:0;
+}
+.cam-wrap img{width:100%;height:100%;object-fit:cover;display:block}
+.cam-hud{position:absolute;inset:0;pointer-events:none}
+/* corner brackets */
+.cam-hud::before,.cam-hud::after{content:'';position:absolute;width:20px;height:20px}
+.cam-hud::before{top:8px;left:8px;border-top:2px solid var(--cyan);border-left:2px solid var(--cyan);box-shadow:-2px -2px 8px rgba(0,229,255,.3)}
+.cam-hud::after{bottom:8px;right:8px;border-bottom:2px solid var(--cyan);border-right:2px solid var(--cyan)}
+.cam-label{position:absolute;top:10px;right:12px;font-family:var(--font-t);font-size:.9rem;letter-spacing:.15em;color:var(--cyan);opacity:.6}
+.cam-rec{position:absolute;top:10px;left:12px;display:flex;align-items:center;gap:5px;font-family:var(--font-t);font-size:.85rem;color:var(--red)}
+.cam-rec-dot{width:6px;height:6px;border-radius:50%;background:var(--red);box-shadow:0 0 6px var(--red);animation:blink 1s infinite}
+/* crosshair */
+.crosshair{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:32px;height:32px;opacity:.25}
+.crosshair::before{content:'';position:absolute;top:50%;left:0;right:0;height:1px;background:var(--cyan)}
+.crosshair::after{content:'';position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--cyan)}
+
+/* ── DPAD ── */
+.dpad{display:grid;grid-template-columns:repeat(3,60px);grid-template-rows:repeat(3,60px);gap:5px;justify-content:center}
+.db{
+  background:var(--bg2);border:1px solid var(--border);color:var(--cyan);
+  border-radius:3px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-size:1.2rem;transition:all .1s;user-select:none;-webkit-tap-highlight-color:transparent;
+  font-family:var(--font-b);
+}
+.db:hover,.db.act{background:rgba(0,229,255,.12);border-color:var(--cyan);box-shadow:0 0 10px rgba(0,229,255,.3)}
+.db.stop-db{background:rgba(255,23,68,.08);border-color:rgba(255,23,68,.3);color:var(--red);font-family:var(--font-t);font-size:.95rem;letter-spacing:.1em}
+.db.stop-db:hover,.db.stop-db.act{background:rgba(255,23,68,.2);border-color:var(--red);box-shadow:0 0 10px rgba(255,23,68,.3)}
+.db.empty{pointer-events:none;background:transparent;border-color:transparent}
+
+/* ── SPEED ── */
+.speed-row{display:flex;justify-content:space-between;font-size:.75rem;letter-spacing:.08em;margin-bottom:5px}
+.speed-num{font-family:var(--font-t);font-size:1.3rem;color:var(--amber)}
+input[type=range]{width:100%;-webkit-appearance:none;height:3px;background:var(--bg3);border:1px solid var(--border);border-radius:2px;outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;background:var(--amber);border-radius:50%;cursor:pointer;box-shadow:0 0 8px var(--amber)}
+
+/* ── IMU CUBE ── */
+#imu-canvas{display:block;margin:0 auto}
+.imu-vals{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
+.imu-val{background:var(--bg2);border:1px solid var(--border);border-radius:2px;padding:5px 6px;text-align:center}
+.imu-lbl{font-size:.58rem;letter-spacing:.12em;opacity:.5;display:block;margin-bottom:2px;text-transform:uppercase}
+.imu-num{font-family:var(--font-t);font-size:1.1rem;color:var(--cyan)}
+
+/* ── HORIZON ── */
+.horizon-wrap{position:relative;width:100%;height:80px;background:var(--bg2);border:1px solid var(--border);border-radius:2px;overflow:hidden}
+#horizon-canvas{display:block}
+
+/* ── GAS BARS ── */
+.gas-row{margin-bottom:8px}
+.gas-head{display:flex;justify-content:space-between;font-size:.7rem;letter-spacing:.08em;margin-bottom:4px}
+.gas-pct{font-family:var(--font-t);font-size:1rem}
+.bar-bg{height:6px;background:var(--bg3);border-radius:1px;overflow:hidden;border:1px solid var(--border)}
+.bar-fill{height:100%;border-radius:1px;transition:width .5s ease,background .4s}
+.mq4-fill{background:var(--cyan);box-shadow:0 0 6px var(--cyan)}
+.mq7-fill{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+.bar-fill.danger{background:var(--red)!important;box-shadow:0 0 8px var(--red)!important}
+.alert{display:none;padding:6px 10px;background:rgba(255,23,68,.1);border:1px solid var(--red);border-radius:2px;font-size:.68rem;letter-spacing:.08em;color:var(--red);text-align:center;animation:blink 1s infinite}
+.alert.show{display:block}
+
+/* ── LOG ── */
+.log{background:var(--bg0);border:1px solid var(--border);border-radius:2px;padding:7px;height:90px;overflow-y:auto;font-size:.62rem;line-height:1.7;font-family:var(--font-t)}
+.log::-webkit-scrollbar{width:3px}.log::-webkit-scrollbar-thumb{background:var(--border)}
+.le{color:var(--cyan)}.le.w{color:var(--amber)}.le.e{color:var(--red)}
+
+/* ── STATUS PILLS ── */
+.pills{display:flex;gap:5px;flex-wrap:wrap}
+.pill{padding:2px 8px;border-radius:12px;font-size:.6rem;letter-spacing:.1em;border:1px solid;font-family:var(--font-t)}
+.pill.ok{border-color:var(--green);color:var(--green);background:rgba(0,230,118,.08)}
+.pill.off{border-color:rgba(255,23,68,.4);color:var(--red);background:rgba(255,23,68,.08)}
+.pill.sim{border-color:rgba(255,179,0,.4);color:var(--amber);background:rgba(255,179,0,.08)}
+
+/* ── NETWORK ── */
+.net-table{font-size:.68rem;line-height:2;font-family:var(--font-t)}
+.net-table span{color:var(--amber)}
+
+/* ── KEYBOARD HINTS ── */
+.kbd-row{display:flex;gap:5px;flex-wrap:wrap}
+.k{background:var(--bg3);border:1px solid var(--border);border-radius:2px;padding:1px 7px;font-size:.6rem;letter-spacing:.05em}
+
+@media(max-width:900px){
+  .main{grid-template-columns:1fr;overflow-y:auto;overflow-x:hidden}
+  html,body{overflow:auto}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- ── TOPBAR ── -->
+<div class="topbar">
+  <div class="logo">SPHERE<span>-1</span> // MISSION CONTROL</div>
+  <div class="topbar-right">
+    <div class="indicator"><div class="dot" id="dot-ws"></div><span id="lbl-ws">OFFLINE</span></div>
+    <div class="indicator"><div class="dot" id="dot-cam"></div><span>CAM</span></div>
+    <div class="indicator"><div class="dot" id="dot-imu"></div><span>IMU</span></div>
+    <div id="clock" style="font-size:1rem">--:--:--</div>
+  </div>
+</div>
+
+<!-- ── MAIN ── -->
+<div class="main">
+
+  <!-- LEFT: Controls -->
+  <div class="panel">
+    <div class="ptitle">// DRIVE</div>
+
+    <div class="dpad">
+      <div class="db empty"></div>
+      <div class="db" id="b-fwd" data-cmd="forward">▲</div>
+      <div class="db empty"></div>
+      <div class="db" id="b-lft" data-cmd="left">◀</div>
+      <div class="db stop-db" id="b-stp" data-cmd="stop">STOP</div>
+      <div class="db" id="b-rgt" data-cmd="right">▶</div>
+      <div class="db empty"></div>
+      <div class="db" id="b-bwd" data-cmd="backward">▼</div>
+      <div class="db empty"></div>
+    </div>
+
+    <div>
+      <div class="speed-row">
+        <span style="letter-spacing:.1em;font-size:.7rem">THROTTLE</span>
+        <span class="speed-num" id="spd-lbl">70%</span>
+      </div>
+      <input type="range" id="spd-slider" min="20" max="100" value="70">
+    </div>
+
+    <div class="ptitle" style="margin-top:4px">// KEYBOARD</div>
+    <div class="kbd-row">
+      <span class="k">W ▲</span><span class="k">S ▼</span>
+      <span class="k">A ◀</span><span class="k">D ▶</span>
+      <span class="k">SPC stop</span>
+    </div>
+
+    <div class="ptitle" style="margin-top:4px">// SYSTEM</div>
+    <div class="pills">
+      <span class="pill off" id="p-ws">WS</span>
+      <span class="pill off" id="p-cam">CAM</span>
+      <span class="pill off" id="p-imu">IMU</span>
+      <span class="pill off" id="p-gas">GAS</span>
+    </div>
+
+    <div class="net-table">
+      <div>IP &nbsp;&nbsp;<span id="pi-ip">---</span></div>
+      <div>PORT <span>5000</span></div>
+      <div>UP &nbsp;&nbsp;<span id="uptime">00:00:00</span></div>
+    </div>
+
+    <div class="log" id="log"></div>
+  </div>
+
+  <!-- CENTER: Camera + IMU horizon -->
+  <div class="panel">
+    <div class="ptitle">// PI CAMERA — LIVE</div>
+    <div class="cam-wrap" style="flex:1;min-height:0">
+      <img id="cam" src="/video_feed" alt="feed">
+      <div class="cam-hud">
+        <div class="cam-label">640×480 · MJPEG</div>
+        <div class="cam-rec"><div class="cam-rec-dot"></div>REC</div>
+        <div class="crosshair"></div>
+      </div>
+    </div>
+
+    <div class="ptitle">// ARTIFICIAL HORIZON</div>
+    <div class="horizon-wrap">
+      <canvas id="horizon-canvas" width="600" height="80"></canvas>
+    </div>
+  </div>
+
+  <!-- RIGHT: IMU + Gas -->
+  <div class="panel">
+    <div class="ptitle">// IMU — ORIENTATION</div>
+    <canvas id="imu-canvas" width="180" height="180"></canvas>
+    <div class="imu-vals">
+      <div class="imu-val"><span class="imu-lbl">ROLL</span><span class="imu-num" id="v-roll">0.0°</span></div>
+      <div class="imu-val"><span class="imu-lbl">PITCH</span><span class="imu-num" id="v-pitch">0.0°</span></div>
+      <div class="imu-val"><span class="imu-lbl">YAW/S</span><span class="imu-num" id="v-yaw">0.0</span></div>
+    </div>
+
+    <div class="ptitle" style="margin-top:4px">// GAS SENSORS</div>
+    <div class="gas-row">
+      <div class="gas-head">
+        <span>MQ-4 <span style="opacity:.5;font-size:.6rem">METHANE</span></span>
+        <span class="gas-pct" id="mq4-v">--</span>%
+      </div>
+      <div class="bar-bg"><div class="bar-fill mq4-fill" id="mq4-b" style="width:5%"></div></div>
+    </div>
+    <div class="gas-row">
+      <div class="gas-head">
+        <span>MQ-7 <span style="opacity:.5;font-size:.6rem">CO</span></span>
+        <span class="gas-pct" id="mq7-v">--</span>%
+      </div>
+      <div class="bar-bg"><div class="bar-fill mq7-fill" id="mq7-b" style="width:5%"></div></div>
+    </div>
+    <div class="alert" id="alert">⚠ GAS THRESHOLD EXCEEDED</div>
+  </div>
+
+</div><!-- /main -->
+</div><!-- /shell -->
+
+<script>
+// ── SOCKET ──────────────────────────────────
+const socket = io();
+let connected = false, t0 = Date.now();
+
+socket.on('connect', () => {
+  connected = true;
+  setDot('dot-ws', true); setDot('dot-ws', true);
+  document.getElementById('lbl-ws').textContent = 'ONLINE';
+  setPill('p-ws', 'ok');
+  document.getElementById('pi-ip').textContent = location.hostname;
+  addLog('WebSocket connected');
+});
+socket.on('disconnect', () => {
+  connected = false;
+  setDot('dot-ws', false);
+  document.getElementById('lbl-ws').textContent = 'OFFLINE';
+  setPill('p-ws', 'off');
+  addLog('Disconnected', 'e');
+});
+socket.on('init', d => {
+  setDot('dot-cam', d.camera); setPill('p-cam', d.camera ? 'ok' : 'off');
+  setDot('dot-imu', d.imu);   setPill('p-imu', d.imu ? 'ok' : 'sim');
+  setPill('p-gas', d.gas ? 'ok' : 'sim');
+  setSpeed(d.speed);
+  addLog(`Camera:${d.camera} IMU:${d.imu ? 'real' : 'sim'} Gas:${d.gas ? 'real' : 'sim'}`);
+});
+socket.on('telemetry', d => {
+  updateIMU(d.imu);
+  updateGas(d.gas);
+});
+
+// ── HELPERS ─────────────────────────────────
+function setDot(id, on) {
+  const el = document.getElementById(id);
+  if (el) { el.className = 'dot' + (on ? ' on' : ''); }
+}
+function setPill(id, state) {
+  const el = document.getElementById(id);
+  if (el) el.className = 'pill ' + state;
+}
+
+// ── CLOCK + UPTIME ───────────────────────────
+setInterval(() => {
+  document.getElementById('clock').textContent = new Date().toTimeString().slice(0,8);
+  const s = Math.floor((Date.now()-t0)/1000);
+  document.getElementById('uptime').textContent =
+    `${String(Math.floor(s/3600)).padStart(2,'0')}:${String(Math.floor((s%3600)/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+}, 1000);
+
+// ── DRIVE ────────────────────────────────────
+function send(cmd) {
+  if (!connected) { addLog('Not connected!','w'); return; }
+  socket.emit('drive', {cmd});
+}
+
+// D-pad
+document.querySelectorAll('.db').forEach(b => {
+  if (!b.dataset.cmd) return;
+  b.addEventListener('mousedown',  () => { send(b.dataset.cmd); b.classList.add('act'); });
+  b.addEventListener('mouseup',    () => { if(b.dataset.cmd!='stop') send('stop'); b.classList.remove('act'); });
+  b.addEventListener('mouseleave', () => { if(b.dataset.cmd!='stop') send('stop'); b.classList.remove('act'); });
+  b.addEventListener('touchstart', e => { e.preventDefault(); send(b.dataset.cmd); b.classList.add('act'); });
+  b.addEventListener('touchend',   e => { e.preventDefault(); if(b.dataset.cmd!='stop') send('stop'); b.classList.remove('act'); });
+});
+
+// Keyboard
+const keyCmd = {w:'forward',s:'backward',a:'left',d:'right',
+                ArrowUp:'forward',ArrowDown:'backward',ArrowLeft:'left',ArrowRight:'right'};
+const held = new Set();
+document.addEventListener('keydown', e => {
+  if (e.repeat) return;
+  const cmd = keyCmd[e.key];
+  if (cmd && !held.has(e.key)) { held.add(e.key); send(cmd); }
+  if (e.code==='Space') { e.preventDefault(); send('stop'); }
+});
+document.addEventListener('keyup', e => {
+  if (held.has(e.key)) { held.delete(e.key); if (!held.size) send('stop'); }
+});
+
+// Speed
+const slider = document.getElementById('spd-slider');
+function setSpeed(v) {
+  slider.value = v;
+  document.getElementById('spd-lbl').textContent = v + '%';
+}
+slider.addEventListener('input',  () => document.getElementById('spd-lbl').textContent = slider.value + '%');
+slider.addEventListener('change', () => {
+  socket.emit('set_speed', {speed: parseInt(slider.value)});
+  addLog(`Speed → ${slider.value}%`);
+});
+
+// ── GAS ──────────────────────────────────────
+function updateGas(g) {
+  document.getElementById('mq4-v').textContent = g.mq4.toFixed(1);
+  document.getElementById('mq7-v').textContent = g.mq7.toFixed(1);
+  const b4 = document.getElementById('mq4-b');
+  const b7 = document.getElementById('mq7-b');
+  b4.style.width = Math.min(g.mq4,100) + '%';
+  b7.style.width = Math.min(g.mq7,100) + '%';
+  b4.classList.toggle('danger', g.mq4 > 60);
+  b7.classList.toggle('danger', g.mq7 > 50);
+  document.getElementById('alert').classList.toggle('show', g.mq4>60||g.mq7>50);
+}
+
+// ── IMU 3D CUBE ──────────────────────────────
+const cubeCanvas = document.getElementById('imu-canvas');
+const cc = cubeCanvas.getContext('2d');
+let roll=0, pitch=0, yaw=0;
+
+function updateIMU(d) {
+  roll  = d.roll  * Math.PI / 180;
+  pitch = d.pitch * Math.PI / 180;
+  yaw   = (d.yaw || 0) * Math.PI / 180;
+  document.getElementById('v-roll').textContent  = d.roll.toFixed(1)  + '°';
+  document.getElementById('v-pitch').textContent = d.pitch.toFixed(1) + '°';
+  document.getElementById('v-yaw').textContent   = d.yaw.toFixed(1);
+  drawCube(); drawHorizon(d.roll, d.pitch);
+}
+
+function rotatePoint(x,y,z) {
+  // Yaw (Z)
+  let x1 = x*Math.cos(yaw) - y*Math.sin(yaw);
+  let y1 = x*Math.sin(yaw) + y*Math.cos(yaw);
+  let z1 = z;
+  // Pitch (X)
+  let x2 = x1;
+  let y2 = y1*Math.cos(pitch) - z1*Math.sin(pitch);
+  let z2 = y1*Math.sin(pitch) + z1*Math.cos(pitch);
+  // Roll (Y)
+  let x3 = x2*Math.cos(roll) + z2*Math.sin(roll);
+  let y3 = y2;
+  let z3 = -x2*Math.sin(roll) + z2*Math.cos(roll);
+  return [x3,y3,z3];
+}
+
+function project(x,y,z) {
+  const fov = 4, cx=90, cy=90;
+  const scale = fov / (fov + z + 2.5);
+  return [cx + x*scale*55, cy + y*scale*55];
+}
+
+const faceColors = [
+  'rgba(0,229,255,0.15)','rgba(0,229,255,0.09)',
+  'rgba(0,229,255,0.12)','rgba(0,229,255,0.06)',
+  'rgba(255,179,0,0.12)','rgba(255,179,0,0.07)'
+];
+
+function drawCube() {
+  cc.clearRect(0,0,180,180);
+  const v = [[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],
+             [-1,-1,1], [1,-1,1], [1,1,1], [-1,1,1]];
+  const rots = v.map(([x,y,z]) => rotatePoint(x,y,z));
+  const pts  = rots.map(([x,y,z]) => project(x,y,z));
+  const faces = [[0,1,2,3],[4,5,6,7],[0,1,5,4],[2,3,7,6],[0,3,7,4],[1,2,6,5]];
+  const normals = faces.map(f => {
+    const [ax,ay,az] = rots[f[0]], [bx,by,bz] = rots[f[1]], [cx,cy,cz] = rots[f[2]];
+    return (bx-ax)*(cy-ay) - (by-ay)*(cx-ax);
+  });
+  const order = faces.map((_,i)=>i).sort((a,b) => {
+    const da = rots[faces[a][0]][2]+rots[faces[a][1]][2]+rots[faces[a][2]][2]+rots[faces[a][3]][2];
+    const db = rots[faces[b][0]][2]+rots[faces[b][1]][2]+rots[faces[b][2]][2]+rots[faces[b][3]][2];
+    return da - db;
+  });
+  order.forEach(i => {
+    if (normals[i] > 0) return;
+    cc.beginPath();
+    const [fx,fy] = pts[faces[i][0]];
+    cc.moveTo(fx,fy);
+    faces[i].slice(1).forEach(vi => { const [px,py]=pts[vi]; cc.lineTo(px,py); });
+    cc.closePath();
+    cc.fillStyle = faceColors[i];
+    cc.fill();
+    cc.strokeStyle = 'rgba(0,229,255,0.5)';
+    cc.lineWidth = 1;
+    cc.stroke();
+  });
+  // Axes
+  const axisV = [[1.5,0,0,'rgba(255,80,80,.8)'],[0,-1.5,0,'rgba(80,255,80,.8)'],[0,0,1.5,'rgba(80,180,255,.8)']];
+  axisV.forEach(([x,y,z,col]) => {
+    const [r0,p0] = project(0,0,0), [r1,p1] = project(...rotatePoint(x,y,z));
+    cc.beginPath(); cc.moveTo(...project(0,0,0)); cc.lineTo(r1,p1);
+    cc.strokeStyle=col; cc.lineWidth=1.5; cc.stroke();
+  });
+}
+
+// ── HORIZON ─────────────────────────────────
+const hCanvas = document.getElementById('horizon-canvas');
+const hCtx = hCanvas.getContext('2d');
+
+function resizeHorizon() {
+  hCanvas.width = hCanvas.parentElement.clientWidth || 600;
+  hCanvas.height = 80;
+}
+resizeHorizon();
+window.addEventListener('resize', resizeHorizon);
+
+function drawHorizon(rollDeg, pitchDeg) {
+  const w = hCanvas.width, h = hCanvas.height;
+  hCtx.clearRect(0,0,w,h);
+
+  const cx = w/2, cy = h/2;
+  const rollRad = rollDeg * Math.PI/180;
+  const pitchOffset = pitchDeg * 1.2;   // px per degree
+
+  hCtx.save();
+  hCtx.translate(cx, cy);
+  hCtx.rotate(rollRad);
+
+  // Sky
+  hCtx.fillStyle = 'rgba(0,80,180,0.25)';
+  hCtx.fillRect(-w, -h + pitchOffset, w*2, h);
+  // Ground
+  hCtx.fillStyle = 'rgba(80,40,0,0.25)';
+  hCtx.fillRect(-w, pitchOffset, w*2, h);
+  // Horizon line
+  hCtx.strokeStyle = 'rgba(0,229,255,0.7)';
+  hCtx.lineWidth = 1.5;
+  hCtx.beginPath(); hCtx.moveTo(-w, pitchOffset); hCtx.lineTo(w, pitchOffset); hCtx.stroke();
+
+  // Tick marks
+  hCtx.strokeStyle = 'rgba(0,229,255,0.3)';
+  hCtx.lineWidth = 1;
+  [-20,-10,10,20].forEach(deg => {
+    const y = pitchOffset + deg*1.2;
+    hCtx.beginPath(); hCtx.moveTo(-30,y); hCtx.lineTo(30,y); hCtx.stroke();
+  });
+
+  hCtx.restore();
+
+  // Fixed center marker
+  hCtx.strokeStyle = 'rgba(0,229,255,.8)';
+  hCtx.lineWidth = 2;
+  hCtx.beginPath(); hCtx.moveTo(cx-40,cy); hCtx.lineTo(cx-10,cy); hCtx.stroke();
+  hCtx.beginPath(); hCtx.moveTo(cx+10,cy); hCtx.lineTo(cx+40,cy); hCtx.stroke();
+  hCtx.beginPath(); hCtx.arc(cx,cy,4,0,Math.PI*2);
+  hCtx.strokeStyle='rgba(255,179,0,.9)'; hCtx.stroke();
+}
+
+// ── LOG ─────────────────────────────────────
+function addLog(msg, type='') {
+  const box = document.getElementById('log');
+  const div = document.createElement('div');
+  div.className = 'le ' + type;
+  div.textContent = `[${new Date().toTimeString().slice(0,8)}] ${msg}`;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+  if (box.children.length > 100) box.removeChild(box.firstChild);
+}
+
+// Init draw
+drawCube();
+drawHorizon(0,0);
+addLog('Dashboard ready');
+</script>
+</body>
+</html>
